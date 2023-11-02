@@ -6,13 +6,18 @@ import numpy as np
 from misc.pcd_utils import knn
 from misc.config import cfg
 
+#pt_w = 当前帧变换到世界坐标系下的点的坐标
+#ctrl_pts_np = 根据kdtree找到的地图中的车道的四个控制点
 def parameterization(pt_w, ctrl_pts_np, tau = 0.5, N = 4):
     # pt_w: 1x3, ctrl_pts: list of linked_points.Node
     # min N = 2
+    #生成样条曲线
     spline = CatmullRomSpline(ctrl_pts_np, tau)
+    #根据u的四个不同取值，0 0.25 0.5 0.75 和1.0得到样条曲线的采样四个点，需要非常注意的采样得到的四个点在控制点P1和P2中间
     anchors = spline.get_points(N, return_knots = True)
 
     # find the two anchors that pt_w is between
+    #找到哪两个采样点距离pt_w最近
     dist, idx = knn(pt_w, anchors[:, :3], k = 2)
     pt1 = anchors[min(idx)]
     pt2 = anchors[max(idx)]
@@ -22,8 +27,8 @@ def parameterization(pt_w, ctrl_pts_np, tau = 0.5, N = 4):
     u = pt1[3] + ratio * (pt2[3] - pt1[3])
     if u < 0 or u > 1:
         return None, None
-    u = u.item()
-    est_pt = spline.get_point(u)
+    u = u.item()#函数取出的元素值的精度更高
+    est_pt = spline.get_point(u)#根据样条曲线计算得到的u，然后计算得到在样条曲线中的坐标
     error = np.linalg.norm(pt_w[:3] - est_pt)
 
     return u, error.item()
@@ -46,6 +51,7 @@ class CatmullRomSpline:
     def get_M(self):
         return self.M
 
+    #将样条曲线分成num份，分别计算得到对应的坐标点
     def get_points(self, num, return_knots = False):
         # four_ctrl_pts: 4xc
         u = np.linspace(0, 1, num)
@@ -56,6 +62,7 @@ class CatmullRomSpline:
             points = np.hstack([points, u])
         return points
 
+    #
     def get_point(self, u, return_coeff = False):
         u_vec = np.array([1, u, u**2, u**3])
         if not return_coeff:
@@ -72,6 +79,7 @@ class CatmullRomSpline:
         derivative = derivative / np.linalg.norm(derivative)
         return derivative
 
+#
 class CatmullRomSplineList:
     def __init__(self, ctrl_pts, tau = 0.5):
         # lower tau -> more sharp at control points
@@ -100,6 +108,7 @@ class CatmullRomSplineList:
     def get_M(self):
         return self.M
 
+    #num_points = 7
     def get_points(self, num_points):
         points = []
         for i in range(self.num_ctrl_pts-3):

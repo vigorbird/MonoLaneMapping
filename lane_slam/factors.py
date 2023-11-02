@@ -200,9 +200,11 @@ def PosePointFactor(measurement: Optional[List], this: gtsam.CustomFactor,
 
     return error
 
-def PosePointTangentFactor(measurement: Optional[List[np.ndarray]], this: gtsam.CustomFactor,
-                    values: gtsam.Values,
-                    jacobians: Optional[List[np.ndarray]]) -> float:
+#
+def PosePointTangentFactor(measurement: Optional[List[np.ndarray]],
+                            this: gtsam.CustomFactor,
+                            values: gtsam.Values,
+                            jacobians: Optional[List[np.ndarray]]) -> float:
     pt = measurement[0]
     pose:gtsam.Pose3 = values.atPose3(this.keys()[0])
     pt_est = pose.transformFrom(pt)

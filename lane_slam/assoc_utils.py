@@ -50,7 +50,7 @@ def affinity2assoc(affinity, method='default'):
     if method == 'km':
         if n > m:
             affinity = np.concatenate([affinity, np.zeros((n, n - m))], axis=1)
-        A = get_km_match(affinity)
+        A = get_km_match(affinity)#A是一个数组 ，返回的是匹配对
     else:
         A = []
         # for i in range(n):
@@ -63,6 +63,8 @@ def affinity2assoc(affinity, method='default'):
                 A.append([lane_id, det_id])
     return A
 
+
+#详见算法实现文档
 def get_dist_thd(xyz, yaw_std, trans_std, xyz_std, dim):
     # xyz: np.array (N, 3) or (N, 2)
     # pt_range = np.max(np.linalg.norm(xyz, axis=1)) # a little bit better
@@ -240,13 +242,16 @@ class KnnASSOC:
         self.det_knn_thd = []
         self.det_categories = []
     
+    #输入的lanes_lm是地图中的lane，目的是构建地图中现有车道线的kdtree
     def set_landmark(self, lanes_lm):
         self.lm_kdtrees = []
         self.lm_categories = []
         self.lm_xyz = []
+        #遍历地图中的所有lane
         for i in range(len(lanes_lm)):
             xyz = lanes_lm[i].points[:, :self.dim]
             self.lm_xyz.append(xyz)
+            #construct_lmr = 计算每个点的角度，这个点的角度是由前后两个点构成的向量组成的
             xyz = xyz if self.knn_type == 'xyz' else self.construct_lmr(xyz)
             if lanes_lm[i].kdtree is None:
                 self.lm_kdtrees.append(KDTree(xyz))
@@ -254,16 +259,23 @@ class KnnASSOC:
                 self.lm_kdtrees.append(lanes_lm[i].kdtree)
             self.lm_categories.append(lanes_lm[i].category)
         self.num_lm = len(lanes_lm)
-            
+
+    #lanes_det = 当前帧的lane_feature     
+    # 会计算每个点的阈值参数 ，并赋值给了det_knn_thd
     def set_deteciton(self, lanes_det, pose_ab):
         self.det_xyz = []
         self.det_feature = []
         self.det_knn_thd = []
         self.det_categories = []
+        #遍历当前帧所有车道线
         for i in range(len(lanes_det)):
             xyz = lanes_det[i].points[:, :self.dim]
+            #yaw_std = 设定值
+            #trans_std = 设定值
+            #xyz_std = 对应ctrl_noise设定值
+            #根据点的距离计算得到每个点的distance_thd
             distance_thd = get_dist_thd(xyz, self.yaw_std, self.trans_std, self.xyz_std, self.dim)
-            xyz = self.transform_xyz(xyz, pose_ab)
+            xyz = self.transform_xyz(xyz, pose_ab)#变换到世界坐标系下
             xyz = xyz if self.knn_type == 'xyz' else self.construct_lmr(xyz)
             self.det_xyz.append(xyz[:, :self.dim])
             self.det_feature.append(xyz)
@@ -286,6 +298,7 @@ class KnnASSOC:
         assoc_scores = np.zeros((self.num_lm, self.num_det))
         assoc_dist = np.zeros((self.num_lm, self.num_det))
         assoc_dist_thd = np.zeros((self.num_lm, self.num_det))
+        #1.先计算分数
         for i in range(self.num_det):
             xyz = self.det_feature[i]
             distance_thd = self.det_knn_thd[i]
@@ -310,6 +323,8 @@ class KnnASSOC:
             C = self.construct_consistency(assoc_scores)
         else:
             C = np.ones((self.num_lm, self.num_det))
+
+        #2.再使用KM根据分数进行匹配对求解
         assoc_scores_w = assoc_scores * C
         A = affinity2assoc(assoc_scores_w, method='km')
 
@@ -362,7 +377,8 @@ class KnnASSOC:
         j = n - p
 
         return int(i-1), int(j-1)
-
+    
+    #计算每个点的角度，这个点的角度是由前后两个点构成的向量组成的
     def construct_lmr(self, xyz, weight = 5.0):
         # for every lane, cost 1.5ms
         num = xyz.shape[0]

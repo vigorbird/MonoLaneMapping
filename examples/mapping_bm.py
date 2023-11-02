@@ -46,7 +46,7 @@ def run_all_segments(bag_paths, multi_process=False, num_workers=20):
 
 def main(bag_paths):
 
-    result = run_all_segments(bag_paths, multi_process=not cfg.visualization)
+    result = run_all_segments(bag_paths, multi_process=not cfg.visualization)#very important function!!!
 
     np.save(os.path.join(cfg.output_dir, 'stats.npy'), result)
     all_stats = {}

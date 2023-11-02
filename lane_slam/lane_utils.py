@@ -18,7 +18,7 @@ def drop_lane_by_p(lane_pts:List, p=0.0):
         lane_pts.pop(drop_id)
     return lane_pts
 
-
+#
 def robust_poly1d(x, y, order):
     fyx_order = order
     if x.shape[0] <= 3:
@@ -32,9 +32,10 @@ def robust_poly1d(x, y, order):
     f_yx = np.poly1d(np.polyfit(x, y, fyx_order))
     return f_yx
 
+#根据设定的x和y的最大最小值删除数据
 def prune_3d_lane_by_range(lane_3d, range_area):
     if len(range_area) == 4:
-        x_min, x_max, y_min, y_max = range_area
+        x_min, x_max, y_min, y_max = range_area#不是单个变量赋值，右边是tuple
     elif len(range_area) == 2:
         x_min, x_max = range_area
         y_min, y_max = 0, 103

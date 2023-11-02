@@ -18,7 +18,7 @@ class Frame:
         self.timestamp = timestamp
         self.T_wc = T_wc
         self.T_cw = self.inv_se3(self.T_wc)
-        self.lane_features = self.load_lane_features(lanes)
+        self.lane_features = self.load_lane_features(lanes)#verty important function
 
     def inv_se3(self, T):
         T_inv = np.eye(4)
@@ -31,7 +31,7 @@ class Frame:
         for lane in lanes:
             instance_id = lane['track_id']
             lane_points_fit = lane['xyz']
-            lane_features.append(LaneFeature(-1, lane_points_fit, lane['category']))
+            lane_features.append(LaneFeature(-1, lane_points_fit, lane['category']))#verty important fucntion
         return lane_features
 
     def get_lane_features(self):

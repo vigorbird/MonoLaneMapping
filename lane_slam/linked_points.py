@@ -61,21 +61,26 @@ class LinkedPoints(object):
             return ctrlpts
         else:
             return None
+    
+    # point = 当前帧感知到的点变换到了世界坐标系下
     def find_footpoint(self, point):
-        point = point[np.newaxis, :3]
-        dist, idx = self.kdtree.query(point, k=2)
+        point = point[np.newaxis, :3]#放在前面，会给行上增加维度
+        dist, idx = self.kdtree.query(point, k=2)#已经匹配上的地图上的lane的kdtree
         if (dist > cfg.lane_mapping.ctrl_points_chord).any():
             return None, None, None
         if (idx == 0).any() or (idx == (self.size() - 1)).any():
             return None, None, None
-        if abs(idx[0][0] - idx[0][1]) > 1:
+        if abs(idx[0][0] - idx[0][1]) > 1:#如果相近的两个控制点不是挨着的则也直接返回
             return None, None, None
         idx1 = min(idx[0])
         idx2 = max(idx[0])
-        ctrl_pts = [self.get_node(idx1-1), self.get_node(idx1),
-                   self.get_node(idx2), self.get_node(idx2+1)]
+        #根据找到的相邻的两个控制点，得到左右相邻的四个控制点坐标
+        ctrl_pts = [self.get_node(idx1-1),
+                    self.get_node(idx1),
+                    self.get_node(idx2), 
+                    self.get_node(idx2+1)]
         ctrl_pts_np = np.array([node.item for node in ctrl_pts])
-        u, error = parameterization(point, ctrl_pts_np)
+        u, error = parameterization(point, ctrl_pts_np)#计算得到的u是对应样条曲线的参数
         if u is None:
             return None, None, None
         return ctrl_pts, u, error

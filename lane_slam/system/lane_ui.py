@@ -224,6 +224,7 @@ class LaneUI:
                 lanes_predict_msg = None
 
         self.frames_data = frames_data
+
     def preprocess_lanes(self, lanes):
         for lane in lanes:
             xyz = lane['xyz']
@@ -235,11 +236,14 @@ class LaneUI:
             lane['xyz'] = xyz
             lane['visibility'] = np.ones(len(xyz))
         return lanes
+    
+    #对当前帧感知到的所有车道线进行range删除点
     def get_lane_in_range(self, lanes):
         #  lane_points: [N, c]
         lanes_new = []
         for lane in lanes:
             xyz = lane['xyz']
+            #根据设定的x和y的最大最小值删除数据
             xyz = prune_3d_lane_by_range(xyz, cfg.preprocess.range_area)
             lane['xyz'] = xyz
             lane['visibility'] = [1] * len(lane['xyz'])
@@ -350,7 +354,8 @@ class LaneUI:
         lanes_in_map = {}
         for lane in self.lanes_in_map.values():
             lane_dict = {'category': lane.category,
-                         'xyz': lane.points, 'xyz_raw': lane.raw_points,
+                         'xyz': lane.points, 
+                         'xyz_raw': lane.raw_points,
                          'ctrl_pts': np.array([node.item for node in lane.ctrl_pts.get_nodes()])}
             lanes_in_map[lane.id] = lane_dict
         result['lanes_in_map'] = lanes_in_map

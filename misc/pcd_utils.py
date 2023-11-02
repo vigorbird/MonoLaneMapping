@@ -6,12 +6,13 @@ import open3d as o3d
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def knn(query, points, k=1):
     # query: (3, )
     # points: (N, 3)
     # return: (k, 3), (k, )
     dist = np.sum((points - query) ** 2, axis=1)
-    idx = np.argsort(dist)
+    idx = np.argsort(dist)#数组值从小到大的索引值
     return dist[idx[:k]], idx[:k]
 
 def compute_plane(normal, point_on_plane):

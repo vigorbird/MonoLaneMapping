@@ -22,13 +22,13 @@ class LaneFeature:
     def __init__(self, id, points, category):
         self.id = id
         self.points = points
-        self.noise = self.compute_noise(points)
+        self.noise = self.compute_noise(points)#very important function
         self.category = category
         self.kdtree = None
         self.ctrl_pts = LinkedPoints()
         self.initialized = False
-        self.ctrl_points_chord = cfg.lane_mapping.ctrl_points_chord
-        self.downsample = cfg.preprocess.downsample
+        self.ctrl_points_chord = cfg.lane_mapping.ctrl_points_chord#3
+        self.downsample = cfg.preprocess.downsample#0.5
         self.polyline = {
             'f_yx': None,
             'f_zx': None,
@@ -47,6 +47,7 @@ class LaneFeature:
             self.obs_first_frame_id = frame_id
         self.obs_last_frame_id = frame_id
 
+    #计算当前帧的噪声参数，详见算法文档
     def compute_noise(self, xyz):
         x_min, x_max, y_min, y_max = cfg.preprocess.range_area
         lower_bound, upper_bound = cfg.lane_mapping.lane_meas_noise
@@ -63,21 +64,23 @@ class LaneFeature:
             points_to_add = lane_feature.get_xyzs()
             self.raw_points = np.vstack((self.raw_points, points_to_add))
             self.raw_points = points_downsample(self.raw_points, cfg.vis_downsample)
-
+    
+    #一条曲线有很多的控制点，然后每四个控制点生成一个小的样条曲线，然后每个样条曲线生成7个采样点
     def smooth(self):
-        ctrl_pts = self.get_ctrl_xyz()
+        ctrl_pts = self.get_ctrl_xyz()#地图中的lane
         if len(ctrl_pts) >= 2:
             curve = CatmullRomSplineList(np.array(ctrl_pts))
-            num = int(self.ctrl_points_chord / self.downsample) + 1
+            num = int(self.ctrl_points_chord / self.downsample) + 1#根据默认设定值得到num = 7， ctrl_points_chord = 3.0， downsample = 0.5
             fitted_pts = curve.get_points(num)
             self.points = fitted_pts
         self.kdtree = KDTree(self.points[:, :cfg.preprocess.dim])
 
+    #
     def init_ctrl_pts(self, lane_w, cur_pose_cw):
         # the use of inputing cur_pose_cw is to make sure the first ctrl point is cloest to the car
         # It is based on the assumption that the car is heading to the forward direction
         # initialize the ctrl points
-        self.get_skeleton(lane_w.get_xyzs(), polyline = lane_w.polyline)
+        self.get_skeleton(lane_w.get_xyzs(), polyline = lane_w.polyline)#very important function!!!!!
 
         head = self.ctrl_pts.get_xyz(0)
         tail = self.ctrl_pts.get_xyz(-1)
@@ -114,14 +117,13 @@ class LaneFeature:
         succ = self.get_skeleton(lane_w_points, self.ctrl_pts.get_xyz(-1), polyline = lane_w.polyline)
         return succ
 
+    #将当前帧与地图匹配上的lane变换到世界坐标系下的lane
     def fitting(self):
         # fitting the lane
         if self.points.shape[0] == 1:
             return
         # determine the order of the polynomial
-        order = 3
-        if self.points.shape[0] <= 3:
-            order = self.points.shape[0] - 1
+        # 找到主方向！！！！！！！
         principal_axis = self.points[-1, :2] - self.points[0, :2]
         expected_axis = np.array([1, 0])
         angle = np.arccos(np.dot(principal_axis, expected_axis) / (np.linalg.norm(principal_axis) * np.linalg.norm(expected_axis)))
@@ -130,6 +132,10 @@ class LaneFeature:
         rot = R.from_rotvec(angle * np.array([0, 0, 1]))
         xyz = rot.apply(self.points)
         x_g, y_g, z_g = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+
+        order = 3
+        if self.points.shape[0] <= 3:
+            order = self.points.shape[0] - 1
         f_yx = robust_poly1d(x_g, y_g, order)
         f_zx = robust_poly1d(x_g, z_g, order)
         self.polyline = {
@@ -192,8 +198,15 @@ class LaneFeature:
                     outer_border = points[i]
         return inner_border, outer_border
 
+    #origin_points:原始点
+    #inital_point：控制点
+    #polyline：多边形拟合点
+    #后面的冒号表示参数的类型注解。
+    #init_ctrl_pts(self, lane_w, cur_pose_cw): self.get_skeleton(lane_w.get_xyzs(), polyline = lane_w.polyline)#very important function!!!!!
+    #update_ctrl_pts(self, lane_w): succ = self.get_skeleton(lane_w_points, self.ctrl_pts.get_xyz(-1), polyline = lane_w.polyline)
     def get_skeleton(self, origin_points:np.ndarray, inital_point=None, polyline=None):
         # input: N*3 points
+        # 当init_ctrl_pts函数里面会进入这个条件
         if inital_point is None:
             # rand_id = np.random.choice(no_assigned)
             # inital_point = origin_points[rand_id]

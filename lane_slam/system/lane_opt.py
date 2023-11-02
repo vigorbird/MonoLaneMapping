@@ -24,13 +24,22 @@ class LaneOptimizer(LaneTracker):
         super(LaneOptimizer, self).__init__(bag_file)
 
     def map_update(self):
+        #向滑动窗口添加当前帧的感知匹配结果
         self.add_keyframe()
+
         # lanes_id = [it_f.frame_id for it_f in self.sliding_window]
         # print("lanes_id: ", lanes_id)
         if self.add_odo_noise:
+            #根据当前帧和地图中的匹配优化当前帧的位姿
             self.update_pose()
+        
+        #
         self.build_graph()
+        
+        #
         self.optimization()
+
+        #更新滑动窗口
         self.slide_window()
 
         if cfg.debug_flag:
@@ -58,6 +67,7 @@ class LaneOptimizer(LaneTracker):
                 self.margin_old = False
             self.sliding_window[-1] = self.cur_frame
 
+    #
     def build_graph(self):
         t0 = perf_counter()
         self.graph = gtsam.NonlinearFactorGraph()
@@ -223,13 +233,19 @@ class LaneOptimizer(LaneTracker):
             self.gtsam_key_frame[X(self.cur_frame.frame_id - 1)] = self.prev_frame
         return True
 
+    # 根据当前帧和地图中的匹配优化当前帧的位姿
     def update_pose(self):
+        #获得滑动窗口中已经匹配上的所有的地图lane序号
         self.lm_in_window = list(set([lf.id for frame in self.sliding_window
                                       for lf in frame.get_lane_features()
                                       if lf.id != -1 and lf.id in self.lanes_in_map]))
+        #对已经匹配上的车道线上的所有点建立kdtree
         for lm_id in self.lm_in_window:
             self.lanes_in_map[lm_id].ctrl_pts.update_kdtree()
+
         last_pose = self.cur_frame.T_wc
+
+        #这个应该是gtsam要优化多少遍
         for i in range(1):
             # add pose to graph
             graph = gtsam.NonlinearFactorGraph()
@@ -238,16 +254,19 @@ class LaneOptimizer(LaneTracker):
             odo_noise[:3] = [theta * np.pi / 180.0 for theta in odo_noise[:3]]
             odo_noise_model = gtsam.noiseModel.Diagonal.Sigmas(odo_noise)
             if self.cur_frame.frame_id == 0:
+                #如果是第一帧则添加 prior factor
                 graph.add(gtsam.PriorFactorPose3(X(self.cur_frame.frame_id),
                                                  gtsam.Pose3(self.cur_frame.T_wc),
                                                  odo_noise_model))
                 initial_estimate.insert(X(self.cur_frame.frame_id), gtsam.Pose3(self.cur_frame.T_wc))
                 self.gtsam_key_frame[X(self.cur_frame.frame_id)] = self.cur_frame
             else:
+                #如果不是第一帧 则添加 prior factor和 between factor
                 graph.add(gtsam.PriorFactorPose3(X(self.prev_frame.frame_id),
                                                  gtsam.Pose3(self.prev_frame.T_wc),
                                                  odo_noise_model))
                 initial_estimate.insert(X(self.prev_frame.frame_id), gtsam.Pose3(self.prev_frame.T_wc))
+
                 graph.add(gtsam.BetweenFactorPose3(X(self.prev_frame.frame_id),
                                                    X(self.cur_frame.frame_id),
                                                    gtsam.Pose3(self.odo_meas),
@@ -257,29 +276,36 @@ class LaneOptimizer(LaneTracker):
                 self.gtsam_key_frame[X(self.cur_frame.frame_id - 1)] = self.prev_frame
 
             directions = []
+            #遍历当前帧已经和地图lane匹配上的 lane
             for i, lf in enumerate(self.cur_frame.get_lane_features()):
                 if lf.id == -1 or lf.id not in self.lanes_in_map:
                     continue
                 lm_id = lf.id
-                lm = self.lanes_in_map[lm_id]
+                lm = self.lanes_in_map[lm_id]#获取和当前帧匹配上的地图lane
+                #遍历当前帧某个lane的所有点
                 for j, pt_c in enumerate(lf.get_xyzs()):
                     if np.linalg.norm(pt_c) > cfg.pose_update.max_range:
                         continue
-                    pt_w = self.cur_frame.T_wc[:3, :3].dot(pt_c[:3]) + self.cur_frame.T_wc[:3, 3]
+                    pt_w = self.cur_frame.T_wc[:3, :3].dot(pt_c[:3]) + self.cur_frame.T_wc[:3, 3]#将当前帧下的点变换到世界坐标系下
                     # pt_w = Twc_noise[:3, :3].dot(pt_c[:3]) + Twc_noise[:3, 3]
                     # 找到离得最近的两个控制点，并且node1->next = node2
+                    # 并返回对应的样条曲线的u参数
                     ctrl_pts, u, error = lm.ctrl_pts.find_footpoint(pt_w)
                     if ctrl_pts is None or error > 2.0:
                         continue
+                    #
                     ctrl_pts_np = np.array([node.item for node in ctrl_pts])
                     if cfg.pose_update.meas_noise > 0:
-                        noise = cfg.pose_update.meas_noise
+                        noise = cfg.pose_update.meas_noise#
                     else:
-                        noise = lf.noise[j]
+                        noise = lf.noise[j]#这里用到了当前帧计算得到的噪声
+
                     if cfg.pose_update.use_huber:
                         noise_model = self.get_pt_noise_model(noise, huber=True, huber_thresh=cfg.pose_update.huber_thresh)
                     else:
                         noise_model = self.get_pt_noise_model(noise, huber=False)
+
+                    #要优化位姿的factor
                     gf = gtsam.CustomFactor(noise_model, [X(self.cur_frame.frame_id)],
                                             partial(PosePointTangentFactor, [pt_c, u, ctrl_pts_np]))
                     graph.add(gf)
@@ -309,6 +335,7 @@ class LaneOptimizer(LaneTracker):
                 # print("update_xyz: ", update_xyz.reshape(3), "degeneracy_d: ", degeneracy_d.reshape(3), "nex_xyz: ", nex_xyz.reshape(3))
                 self.cur_frame.T_wc = self.cur_frame.T_wc @ update_pose
             else:
+                #默认会进入这个条件
                 self.cur_frame.T_wc = result.atPose3(key).matrix()
             delta = np.dot(inv_se3(last_pose), self.cur_frame.T_wc)
             if rot_to_angle(delta[:3, :3], deg=True) < 0.1:
@@ -316,6 +343,7 @@ class LaneOptimizer(LaneTracker):
             last_pose = self.cur_frame.T_wc
 
         return True
+    
     def optimization(self):
         t0 = perf_counter()
         if self.use_isam:
@@ -349,6 +377,10 @@ class LaneOptimizer(LaneTracker):
         # # print node value
         # for key in result.keys():
         #     print('key: ', gtsam.DefaultKeyFormatter(key), 'value: ', result.atPoint3(key))
+
+        #
+
+        #优化后设置状态
         for key in result.keys():
             # print('key', gtsam.DefaultKeyFormatter(key), ', in graph: ', key in self.key_in_graph.keys())
             if key in self.key_in_graph.keys():
@@ -360,21 +392,28 @@ class LaneOptimizer(LaneTracker):
             else:
                 print('key not in graph: ', gtsam.DefaultKeyFormatter(key))
 
+        #
         for lane in self.lanes_in_map.values():
-            lane.smooth()
+            lane.smooth()#一条曲线有很多的控制点，然后每四个控制点生成一个小的样条曲线，然后每个样条曲线生成7个采样点
 
-        if cfg.lane_mapping.init_after_opt:
+        if cfg.lane_mapping.init_after_opt:#默认不进入这个条件
             self.create_new_lane()
+
         self.opt_timer.update(perf_counter() - t0)
 
+    #
     def create_new_lane(self):
+        
+        #遍历当前帧已经匹配上的lane
         for lf in self.cur_frame.get_lane_features():
             if lf.id == -1:
                 continue
-
+            
+            #将当前帧与地图匹配上的lane变换到世界坐标系下
             lane_feature_w = self.cur_frame.transform_to_world(lf)
             lane_feature_w.fitting()
 
+            #
             if lane_feature_w.id not in self.lanes_in_map:
                 # add new lane, build new KDTree
                 self.lanes_in_map[lane_feature_w.id] = lane_feature_w
@@ -451,12 +490,13 @@ class LaneOptimizer(LaneTracker):
             self.graph.add(gtsam.PriorFactorPoint3(key, gtsam.Point3(node.item), ctrlpt_noise_model))
         return
 
+    #更新滑动窗口
     def slide_window(self):
         if self.use_isam:
             return
         if len(self.sliding_window) < self.window_size + 1:
             return
-        latest_frame = self.sliding_window[-1]
+        latest_frame = self.sliding_window[-1]#当前帧
         if self.margin_old:
             self.sliding_window.pop(0)
             self.sliding_window.append(latest_frame)
@@ -474,6 +514,7 @@ class LaneOptimizer(LaneTracker):
             node.set_key(L(idx))
             node.set_lane_id(lane_id)
             return False
+        
     def graph_init(self):
         self.gtsam_key_frame = {}
         self.lanes_in_graph = {} # lane id -> control points in graph

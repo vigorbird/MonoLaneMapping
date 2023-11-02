@@ -28,12 +28,14 @@ class LaneMapping(LaneOptimizer):
             self.time_stamp.append(timestamp)
 
             # 1. odometry
-            t0 = perf_counter()
+            t0 = perf_counter()#python library function
+            #主要是对当前帧的车道线根据range进行过滤，并生成当前帧的数据      
             self.odometry(lane_pts_c, pose_wc, timestamp)
             self.odo_timer.update(perf_counter() - t0)
 
             # 2. lane association
             t1 = perf_counter()
+            #
             self.lane_association()
             self.assoc_timer.update(perf_counter() - t1)
 
@@ -41,9 +43,17 @@ class LaneMapping(LaneOptimizer):
             self.map_update()
             self.prev_frame = self.cur_frame
             self.whole_timer.update(perf_counter() - t0)
+
+            #4.对地图中的lane进行连续时间观测总数量控制
+            # 如果连续被观测则不会被删除
+            # 如果没有被连续观测，并且观测数量特别少则删除
             self.lane_nms(self.cur_frame)
 
+            #5.删除车道线
             if self.merge_lane:
+                #符合下面两个条件其中之一的，就从地图中删除这个车道线：
+                #如果这个车道线总是断断续续被观测到则从地图中删除这个车道线
+                #如果两个车道线距离的比较近则从地图中删除这个车道线
                 self.post_merge_lane()
 
             if self.save_result:
@@ -57,6 +67,7 @@ class LaneMapping(LaneOptimizer):
         # print('Max whole time: %.3fms, odo: %.3fms, assoc: %.3fms, graph: %.3fms, isam: %.3fms' % (
         #     self.whole_timer.max * 1000, self.odo_timer.max * 1000, self.assoc_timer.max * 1000,
         #     self.graph_build_timer.max * 1000, self.opt_timer.max * 1000))
+        #status 数据是 map
         stats = self.evaluate_pose()
         stats.update({"map_size": self.map_size()})
         stats.update({"graph": self.graph_build_timer.avg * 1000})
@@ -71,6 +82,9 @@ class LaneMapping(LaneOptimizer):
 
         return stats
 
+    # 连续时间观测总数量控制
+    # 如果连续被观测则不会被删除
+    # 如果没有被连续观测，并且观测数量特别少则删除
     def lane_nms(self, frame):
         for lane in frame.get_lane_features():
             if lane.id == -1:
@@ -87,21 +101,27 @@ class LaneMapping(LaneOptimizer):
                 ids_to_remove.append(lm.id)
         for id in ids_to_remove:
             self.lanes_in_map.pop(id)
-
+    
+    #符合下面两个条件其中之一的，就从地图中删除这个车道线：
+    #如果这个车道线总是断断续续被观测到则从地图中删除这个车道线
+    #如果两个车道线距离的比较近则从地图中删除这个车道线
     def post_merge_lane(self):
 
         overlap_id = []
+
+        #如果这个车道线总是断断续续被观测到则从地图中删除这个车道线
         for lm in self.lanes_in_map.values():
             score = lm.obs_num / (lm.obs_last_frame_id - lm.obs_first_frame_id + 1)
             # print(lm.id, lm.obs_num, score)
             if score < 0.5 and lm.obs_num > 2:
                 overlap_id.append(lm.id)
 
+        #如果两个车道线距离的比较近则从地图中删除这个车道线
         for lane_id_a, lane_feature_a in self.lanes_in_map.items():
             for lane_id_b, lane_feature_b in self.lanes_in_map.items():
                 if lane_id_a == lane_id_b:
                     continue
-                overlap_a = lane_feature_a.overlap_ratio(lane_feature_b)
+                overlap_a = lane_feature_a.overlap_ratio(lane_feature_b)#
                 overlap_b = lane_feature_b.overlap_ratio(lane_feature_a)
                 if overlap_a > 0.7 and lane_feature_a.size() < lane_feature_b.size():
                     overlap_id.append(lane_id_a)
