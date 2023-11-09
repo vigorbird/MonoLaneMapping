@@ -215,7 +215,7 @@ def PosePointTangentFactor(measurement: Optional[List[np.ndarray]],
     pt_meas, coeff = spline.get_point(u, return_coeff=True)
     p2p = (pt_est - pt_meas).reshape(3,1)
     # p2p_2 = pose.inverse().transformFrom(pt_meas) - pt
-    di = spline.get_derivative(u).reshape(3, 1)
+    di = spline.get_derivative(u).reshape(3, 1)#脱裤子放屁 写的太复杂了
     proj = np.eye(3) - di @ di.T
     error = proj @ p2p
     if cfg.pose_update.reproject_error:
