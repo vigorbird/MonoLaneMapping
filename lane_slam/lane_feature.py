@@ -95,7 +95,7 @@ class LaneFeature:
         self.initialized = True#好像这个变量并没有被使用
 
     #输入的是lane原始点
-    #详见算法实现文档，应该是为了滤除杂点
+    #详见算法实现文档，添加不在控制点之间的点
     def get_pts_to_add(self, points):
         # points: N x 3
         ctrl_pts_size = self.ctrl_pts.size()
@@ -110,7 +110,7 @@ class LaneFeature:
             d_b = pt - self.ctrl_pts.get_xyz(-1)
             cos_a = np.dot(d_a, normal_a) / (np.linalg.norm(d_a) * np.linalg.norm(normal_a))
             cos_b = np.dot(d_b, normal_b) / (np.linalg.norm(d_b) * np.linalg.norm(normal_b))
-            thd = np.cos(np.deg2rad(cfg.lane_mapping.skeleton_angle_thd))
+            thd = np.cos(np.deg2rad(cfg.lane_mapping.skeleton_angle_thd))#skeleton_angle_thd = 90
             if cos_a > thd or cos_b > thd:
                 pts_to_add.append(pt)
         pts_to_add = np.array(pts_to_add)
@@ -152,7 +152,8 @@ class LaneFeature:
             'f_zx': f_zx,
             'rot': rot
         }
-
+    
+    #没有被使用过的函数！
     def get_polyline_points(self):
         points = self.polyline['rot'].apply(self.points)
         max_x = np.max(points[:, 0])
@@ -216,7 +217,7 @@ class LaneFeature:
     #origin_points:当前帧车道线矢量化出来的原始点（在世界坐标系下）
     #inital_point地图lane上最后一个控制点
     #polyline：多边形拟合点
-    #后面的冒号表示参数的类型注解。
+    #这个函数的主要作用是根据新的观测向地图中的lane添加新的控制点
     #init_ctrl_pts: get_skeleton(lane_w.get_xyzs(), polyline = lane_w.polyline)#very important function!!!!!
     #update_ctrl_pts: succ = get_skeleton(lane_w_points, self.ctrl_pts.get_xyz(-1), polyline = lane_w.polyline)
     def get_skeleton(self, origin_points:np.ndarray, inital_point=None, polyline=None):
@@ -234,7 +235,7 @@ class LaneFeature:
             num += 1
             # if self.id == 2 and self.ctrl_pts.size() >= 43:
             #     self.id = self.id
-            #1.滤除杂点，详见算法实现文档
+            #1.添加不在现有控制点之外的点，详见算法实现文档
             origin_points = self.get_pts_to_add(origin_points)
             #如果没有有效点则直接返回！！！
             if origin_points.shape[0] == 0:
@@ -285,12 +286,12 @@ class LaneFeature:
                 if d_head <= d_tile: # head is closer to the farthest point 如果是初始化那么永远进入这个条件
                     center = self.ctrl_pts.get_xyz(0)
                     if self.ctrl_pts.size()>=2:
-                        outer_border = self.get_query(self.ctrl_pts.get_xyz(1), #query pt
-                                                      self.ctrl_pts.get_xyz(0), #center
+                        outer_border = self.get_query(self.ctrl_pts.get_xyz(1), #start
+                                                      self.ctrl_pts.get_xyz(0), #end
                                                       polyline)
                     next_initial = self.get_next_node(outer_border, #query pt
-                                                      self.ctrl_pts.get_xyz(0),
-                                                      self.ctrl_points_chord, 
+                                                      self.ctrl_pts.get_xyz(0),# center
+                                                      self.ctrl_points_chord, #ctrl_points_chord = 3
                                                       polyline)
                     self.ctrl_pts.add(next_initial)
                     # print("add head ", d_head, " ", d_tile)
@@ -309,7 +310,7 @@ class LaneFeature:
                 inital_point = next_initial#变更了初始控制点！！！！
                 origin_points = origin_points[no_assigned]
 
-    #
+    #详见算法实现文档
     def get_query(self, start_pt, end_pt, polyline):
         start_pt_new = polyline['rot'].apply(start_pt)
         end_pt_new = polyline['rot'].apply(end_pt)
@@ -322,6 +323,7 @@ class LaneFeature:
         query = np.array([x_new, polyline['f_yx'](x_new), polyline['f_zx'](x_new)])
         query = polyline['rot'].inv().apply(query)
         return query
+        
     
     #从center到query构成向量，然后取向量长度为radius，将这个center加上这个向量
     #详见算法实现文档
@@ -337,6 +339,7 @@ class LaneFeature:
     
     #center = 控制点
     #qury = 距离控制点比较远的原始点
+    #详见算法实现文档
     def get_next_node(self, query, center, radius, polyline, points_debug=None):
         query_new = polyline['rot'].apply(query)#polyline['rot'] = 将世界坐标系变化到局部坐标系的旋转矩阵
         center_new = polyline['rot'].apply(center)
@@ -418,6 +421,7 @@ class LaneFeature:
             text_pcd = text_3d(str(i), text_pos, font_size=100, degree=-90.0)
             vis_pcds.append(text_pcd)
         return vis_pcds
+    
     # visualize the skeleton generating process
     def plot_debug(self, points = None, query=None, center=None, next_initial=None, polyline = None):
         if polyline is None:

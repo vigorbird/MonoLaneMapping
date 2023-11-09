@@ -60,7 +60,7 @@ class LaneTracker(LaneUI):
             if i in A[:, 1]:
                 j = A[A[:, 1] == i, 0][0]#拿到当前帧对应地图lane中的序号
                 det_list[i].id = lm_list[j].id#改变当前帧感知中的序号，赋值为地图lane中的序号
-            elif det_list[i].self_check():
+            elif det_list[i].self_check():#当前帧没有和任何地图中的车道线匹配上，然后还要判断当前帧的这个车道线够长，才能生成一条新的车道线
                 det_list[i].id = self.max_lane_id + 1
                 self.max_lane_id += 1
             else:

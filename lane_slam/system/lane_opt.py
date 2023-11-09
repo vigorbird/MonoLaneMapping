@@ -74,18 +74,20 @@ class LaneOptimizer(LaneTracker):
         self.initial_estimate = gtsam.Values()
         self.lane_meas = []
 
-        if not cfg.lane_mapping.init_after_opt:#默认不会进入这个条件
-            self.create_new_lane()
+        #1.
+        if not cfg.lane_mapping.init_after_opt:#默认会进入这个条件
+            self.create_new_lane()#very important function!!!!!!!!!
 
         # self.odo_graph()
         # record the landmarks in the sliding window
-        # 遍历滑动窗口中的所有frame，并抽取那些已经匹配好的世界lane id
+        #2.遍历滑动窗口中的所有frame，并抽取那些已经匹配好的世界lane id
         self.lm_in_window = list(set([lf.id for frame in self.sliding_window
                                       for lf in frame.get_lane_features()
                                       if lf.id != -1 and lf.id in self.lanes_in_map]))
 
         # prepare the grid for downsample
-        # lane_grid[世界lane id][控制点id]
+        # lane_grid[世界lane id][控制点id][对应区间id]
+        #3. 
         self.lane_grid = {}
         for lm_id in self.lm_in_window:
             self.lanes_in_map[lm_id].ctrl_pts.update_kdtree()
@@ -101,7 +103,7 @@ class LaneOptimizer(LaneTracker):
             for i, lf in enumerate(frame.get_lane_features()):
                 if lf.id == -1 or lf.id not in self.lanes_in_map:
                     continue
-                lm_id = lf.id
+                lm_id = lf.id##世界lane对应的id
                 lm = self.lanes_in_map[lm_id]#世界lane对应的数据结构
                 #遍历当前帧的所有点
                 for j, pt_c in enumerate(lf.get_xyzs()):
@@ -118,7 +120,7 @@ class LaneOptimizer(LaneTracker):
                     else:
                         #lane_sample_num = 5
                         interval_id = np.clip(int(u * cfg.lane_mapping.lane_sample_num), 0, cfg.lane_mapping.lane_sample_num - 1)
-                        if lf.noise[j] < self.lane_grid[lm_id][ctrl_pts[1].id][interval_id][-1]:
+                        if lf.noise[j] < self.lane_grid[lm_id][ctrl_pts[1].id][interval_id][-1]:#选这个interval里面的最近点
                             self.lane_grid[lm_id][ctrl_pts[1].id][interval_id] = [pt_w, pt_c, ctrl_pts, lm_id, frame_id, lf.noise[j]]
 
                 # if self.visualization: # for visualization only
@@ -127,16 +129,21 @@ class LaneOptimizer(LaneTracker):
                 if cfg.debug_flag:
                     self.lane_meas.append(deepcopy(frame.transform_to_world(lf)))
 
-        #
+        #如果使用batch优化 进入这个条件
         for lm_id in [] if self.use_isam else self.lane_grid.keys():
             for ctrl_pt_id in self.lane_grid[lm_id].keys():
                 for interval_id in range(cfg.lane_mapping.lane_sample_num):
                     if self.lane_grid[lm_id][ctrl_pt_id][interval_id][-1] < np.inf:
                         pts_cp.append(self.lane_grid[lm_id][ctrl_pt_id][interval_id])
+        
 
-        key_status_cur = {}
+       #前面都是准备数据！！！！！！！
+       #最后这一个步骤加入了factor！！！！！！！！！！！！！！！！
+        key_status_cur = {}#key = 控制点在gtsam中的序号 value = 被观测次数 
+        #对应的元素分别是：世界点的坐标（包含了对对应样条曲线的u），对应的在世界坐标系下的坐标，对应的控制点坐标，世界lane对应的id，观测到这个lane的frameid，
         for pt_w, pt_c, ctrl_pts, lm_id, frame_id, noise in pts_cp:
             # insert initial estimate
+            #每个控制点加入到gtsam的状态中
             for ctrl_pt in ctrl_pts:
                 in_graph = self.set_gtsam_symbol(lm_id, ctrl_pt.id, ctrl_pt)
                 key = ctrl_pt.get_key()
@@ -144,14 +151,16 @@ class LaneOptimizer(LaneTracker):
                     if not in_graph:
                         self.initial_estimate.insert_or_assign(key, gtsam.Point3(ctrl_pt.item))
                 else:
-                    self.initial_estimate.insert_or_assign(key, gtsam.Point3(ctrl_pt.item))
+                    self.initial_estimate.insert_or_assign(key, gtsam.Point3(ctrl_pt.item))#gtsam层面函数
+            #
             u = pt_w[-1]
+            #实际上只用到了pt_w、ctrl_pts和u
             gf = self.lane_factor(pt_w, pt_c, u, ctrl_pts, noise, frame_id)
             self.factor_candidates.append([gf, pt_w, pt_c, np.asarray([node.item for node in ctrl_pts]), lm_id, frame_id, noise])
             self.update_key_status(ctrl_pts, key_status_cur)
 
-        #最后这一个步骤加入了factor
-        added_cp_d = []
+
+        added_cp_d = []#仅用于调试
         if self.use_isam:
             added_num = 0
             # merge key_status
@@ -179,23 +188,25 @@ class LaneOptimizer(LaneTracker):
                 self.factor_candidates.pop(i)
             # print('added factor num: ', added_num)
             self.add_chordal_factor(key_status_cur)
-        else:
+        else:#默认我们使用batch式的优化方式
             for i_gf, (gf, pt_w, pt_c, ctrl_pts, lm_id, frame_id, noise) in enumerate(self.factor_candidates):
-                self.graph.add(gf)
+                self.graph.add(gf)#添加控制点的常规factor
                 added_cp_d.append([pt_w, pt_c, ctrl_pts, lm_id, frame_id, noise, self.graph.size() - 1])
+
             self.factor_candidates = []
-            self.add_ctrl_factor(key_status_cur)
+            self.add_ctrl_factor(key_status_cur)#添加那些第一次被观测的控制点的prior factor
 
         self.graph_build_timer.update(perf_counter() - t0)
+
         if cfg.debug_flag:
             self.lanes_prev = []
             for lane_id in self.lm_in_window:
                 self.lanes_prev.append(deepcopy(self.lanes_in_map[lane_id]))
-        self.pts_cp_valid = added_cp_d
+        self.pts_cp_valid = added_cp_d#仅用于调试
 
 
 
-
+    #只用到了pt_w和ctrl_pts
     def lane_factor(self, pt_w, pt_c, u, ctrl_pts, noise, frame_id):
 
         # noise_model = self.get_pt_noise_model(noise, huber=False)
@@ -419,7 +430,7 @@ class LaneOptimizer(LaneTracker):
         
         #遍历当前帧已经匹配上的lane
         for lf in self.cur_frame.get_lane_features():
-            if lf.id == -1:
+            if lf.id == -1:#表示这个车道线不够长
                 continue
             
             #将当前帧与地图匹配上的lane变换到世界坐标系下
@@ -427,7 +438,7 @@ class LaneOptimizer(LaneTracker):
             lane_feature_w.fitting()
 
             #
-            if lane_feature_w.id not in self.lanes_in_map:
+            if lane_feature_w.id not in self.lanes_in_map:#是一条新的车道线
                 # add new lane, build new KDTree
                 self.lanes_in_map[lane_feature_w.id] = lane_feature_w
                 self.lanes_in_map[lane_feature_w.id].init_ctrl_pts(lane_feature_w, self.cur_frame.T_cw)
@@ -477,7 +488,8 @@ class LaneOptimizer(LaneTracker):
                 meas = self.key_in_graph[key_pair[1]].item - self.key_in_graph[key_pair[0]].item
                 self.graph.add(gtsam.BetweenFactorPoint3(key_pair[0], key_pair[1], meas, noise_model))
                 # print('chordal factor: ', self.graph.at(self.graph.size() - 1).error(self.initial_estimate))
-                
+
+    #              
     def update_key_status(self, ctrl_pts, key_status):
         # first element: observation times, second element: main observation times, third element: factor id
         for ctrl_pt in ctrl_pts:
@@ -485,9 +497,11 @@ class LaneOptimizer(LaneTracker):
                 key_status[ctrl_pt.get_key()] = [1, 0]
             else:
                 key_status[ctrl_pt.get_key()][0] += 1
+
         key_status[ctrl_pts[1].get_key()][1] += 1
         key_status[ctrl_pts[2].get_key()][1] += 1
 
+    #添加那些第一次被观测的控制点的prior factor
     def add_ctrl_factor(self, key_status):
         if self.use_isam:
             constrainted_keys = self.graph.keys()
@@ -497,6 +511,7 @@ class LaneOptimizer(LaneTracker):
             if obs[0] < 4 or obs[1] < 1:
             # if obs[1] < 1:
                 key_unstable.append(key)
+
         for key in key_unstable:
             node = self.key_in_graph[key]
             # print("add_ctrl_factor key: ", gtsam.DefaultKeyFormatter(key))
@@ -520,6 +535,7 @@ class LaneOptimizer(LaneTracker):
             self.sliding_window.pop(-2)
             self.sliding_window.insert(-1, latest_frame)
 
+    #
     def set_gtsam_symbol(self, lane_id, ctrl_pt_id, node:Node):
         if (lane_id, ctrl_pt_id) in self.lanes_in_graph:
             return True
@@ -527,6 +543,7 @@ class LaneOptimizer(LaneTracker):
             idx = len(self.lanes_in_graph)
             self.lanes_in_graph[(lane_id, ctrl_pt_id)] = L(idx)
             self.key_in_graph[L(idx)] = node
+
             node.set_key(L(idx))
             node.set_lane_id(lane_id)
             return False

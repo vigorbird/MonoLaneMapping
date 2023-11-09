@@ -43,6 +43,7 @@ class Frame:
         lane_pts_w = np.concatenate([lane_pts_w, lane_pts_c[:, 3:]], axis=1)
         return LaneFeature(lane_feature.id, lane_pts_w, lane_feature.category)
 
+    #没有被使用的函数！！！
     def lane_fitting(self, lane_points, step=0.1):
         #   lanes: [N, 6]
         approximator = CubicBSplineApproximator(max_iter = 20, res_delta_tld = 5e-2)
