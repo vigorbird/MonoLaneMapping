@@ -57,13 +57,14 @@ class LaneFeature:
         noise = lower_bound + (upper_bound - lower_bound) * ratio
         return noise
 
+    #更新哪些帧看到了这个新的车道线，并将新的观测原始点加入到地图车道线中，并对所有的原始点进行降采样
     def update_raw_pts(self, lane_feature, frame_id):
         # use KDTree to update lane with downsampling new lane points
         if frame_id not in self.vis_frame_ids:
             self.vis_frame_ids.append(frame_id)
             points_to_add = lane_feature.get_xyzs()
             self.raw_points = np.vstack((self.raw_points, points_to_add))
-            self.raw_points = points_downsample(self.raw_points, cfg.vis_downsample)
+            self.raw_points = points_downsample(self.raw_points, cfg.vis_downsample)#vis_downsample = 0.1
     
     #一条曲线有很多的控制点，然后每四个控制点生成一个小的样条曲线，然后每个样条曲线生成7个采样点
     def smooth(self):
@@ -80,16 +81,21 @@ class LaneFeature:
         # the use of inputing cur_pose_cw is to make sure the first ctrl point is cloest to the car
         # It is based on the assumption that the car is heading to the forward direction
         # initialize the ctrl points
+        #核心作用是更新ctrl_pts
         self.get_skeleton(lane_w.get_xyzs(), polyline = lane_w.polyline)#very important function!!!!!
 
+        
         head = self.ctrl_pts.get_xyz(0)
         tail = self.ctrl_pts.get_xyz(-1)
+        #将控制点从世界系变换到车体系
         head = cur_pose_cw[:3, :3].dot(head) + cur_pose_cw[:3, 3]
         tail = cur_pose_cw[:3, :3].dot(tail) + cur_pose_cw[:3, 3]
         if np.linalg.norm(head) > np.linalg.norm(tail):
-            self.ctrl_pts.reverse()
-        self.initialized = True
+            self.ctrl_pts.reverse()#将item中的元素反向排序，并交换head_height和tail_height
+        self.initialized = True#好像这个变量并没有被使用
 
+    #输入的是lane原始点
+    #详见算法实现文档，应该是为了滤除杂点
     def get_pts_to_add(self, points):
         # points: N x 3
         ctrl_pts_size = self.ctrl_pts.size()
@@ -117,7 +123,8 @@ class LaneFeature:
         succ = self.get_skeleton(lane_w_points, self.ctrl_pts.get_xyz(-1), polyline = lane_w.polyline)
         return succ
 
-    #将当前帧与地图匹配上的lane变换到世界坐标系下的lane
+    #将当前帧与地图匹配上的lane 变换到世界坐标系下的lane
+    #详见算法实现文档
     def fitting(self):
         # fitting the lane
         if self.points.shape[0] == 1:
@@ -134,6 +141,8 @@ class LaneFeature:
         x_g, y_g, z_g = xyz[:, 0], xyz[:, 1], xyz[:, 2]
 
         order = 3
+        #两个点就是1阶拟合
+        #三个点就是2阶拟合
         if self.points.shape[0] <= 3:
             order = self.points.shape[0] - 1
         f_yx = robust_poly1d(x_g, y_g, order)
@@ -155,6 +164,7 @@ class LaneFeature:
         xyz = self.polyline['rot'].inv().apply(xyz)
         return xyz
 
+    #没有被使用的函数
     def dist2ctrlpts(self, pt):
         dist = []
         last_id = -1
@@ -165,6 +175,7 @@ class LaneFeature:
         min_dist = dist[min_id]
         return min_dist, min_id==last_id or min_id==0
 
+    #
     def find_border_point_kdtree(self, query, points, no_assigned):
         kdtree = KDTree(points)
         upper_bound = cfg.lane_mapping.ctrl_points_chord
@@ -179,7 +190,11 @@ class LaneFeature:
             for i in idx[:-1]:
                 no_assigned.remove(i)
         return inner_border, outer_border
-
+    
+    #query = 控制点
+    #points = 凸点
+    #遍历所有的凸点，如果距离控制点很小，那么删除这个凸点，记录哪个凸点距离控制点最远 = inner_border
+    #如果距离控制点超过阈值，记录哪个凸点距离控制点最近 = outer_border
     def find_border_point(self, query, points, no_assigned):
         min_dist = np.inf
         outer_border = None
@@ -198,12 +213,12 @@ class LaneFeature:
                     outer_border = points[i]
         return inner_border, outer_border
 
-    #origin_points:原始点
-    #inital_point：控制点
+    #origin_points:当前帧车道线矢量化出来的原始点（在世界坐标系下）
+    #inital_point地图lane上最后一个控制点
     #polyline：多边形拟合点
     #后面的冒号表示参数的类型注解。
-    #init_ctrl_pts(self, lane_w, cur_pose_cw): self.get_skeleton(lane_w.get_xyzs(), polyline = lane_w.polyline)#very important function!!!!!
-    #update_ctrl_pts(self, lane_w): succ = self.get_skeleton(lane_w_points, self.ctrl_pts.get_xyz(-1), polyline = lane_w.polyline)
+    #init_ctrl_pts: get_skeleton(lane_w.get_xyzs(), polyline = lane_w.polyline)#very important function!!!!!
+    #update_ctrl_pts: succ = get_skeleton(lane_w_points, self.ctrl_pts.get_xyz(-1), polyline = lane_w.polyline)
     def get_skeleton(self, origin_points:np.ndarray, inital_point=None, polyline=None):
         # input: N*3 points
         # 当init_ctrl_pts函数里面会进入这个条件
@@ -219,45 +234,64 @@ class LaneFeature:
             num += 1
             # if self.id == 2 and self.ctrl_pts.size() >= 43:
             #     self.id = self.id
+            #1.滤除杂点，详见算法实现文档
             origin_points = self.get_pts_to_add(origin_points)
+            #如果没有有效点则直接返回！！！
             if origin_points.shape[0] == 0:
                 return True
+            
             no_assigned = np.arange(origin_points.shape[0]).tolist()
             # find the farthest point in a radius
+             #遍历所有的点：
+            #如果距离控制点很小，那么删除这个点，并记录哪个点距离控制点最远 = inner_border
+            #如果距离控制点超过阈值，记录哪个点距离控制点最近 = outer_border
+            #no_assigned（函数返回值） = 删除了距离控制点很近的点
             if origin_points.shape[0] <= 15:
                 inner_border, outer_border = self.find_border_point(inital_point, origin_points, no_assigned)
             else:
                 inner_border, outer_border = self.find_border_point_kdtree(inital_point, origin_points, no_assigned)
+            
+            #所有点距离控制点都很近
             if outer_border is None: # this is equal to the case that no_assigned is empty
                 d_head = np.linalg.norm(self.ctrl_pts.get_xyz(0) - inner_border)
                 d_tile = np.linalg.norm(self.ctrl_pts.get_xyz(-1) - inner_border)
-                if d_head <= d_tile: # head is closer to the farthest point
+                if d_head <= d_tile: # head is closer to the farthest point 如果是初始化那么永远进入这个条件
                     center = self.ctrl_pts.get_xyz(0)
                     if self.ctrl_pts.size()>=2:
                         inner_border = self.get_query(self.ctrl_pts.get_xyz(1), self.ctrl_pts.get_xyz(0), polyline)
                     next_initial = self.get_next_node(inner_border, self.ctrl_pts.get_xyz(0), self.ctrl_points_chord, polyline)
-                    self.ctrl_pts.add(next_initial)
+                    self.ctrl_pts.add(next_initial)#very important function!!!! 向头部添加
                 else:#if tile is closer or equal
                     center = self.ctrl_pts.get_xyz(-1)
                     if self.ctrl_pts.size()>=2:
                         inner_border = self.get_query(self.ctrl_pts.get_xyz(-2), self.ctrl_pts.get_xyz(-1), polyline)
-                    next_initial = self.get_next_node(inner_border, self.ctrl_pts.get_xyz(-1), self.ctrl_points_chord, polyline)
-                    self.ctrl_pts.append(next_initial)
+                    next_initial = self.get_next_node(inner_border,#query pt
+                                                      self.ctrl_pts.get_xyz(-1),#center
+                                                      self.ctrl_points_chord,#ctrl_points_chord = 3
+                                                      polyline)
+                    self.ctrl_pts.append(next_initial)#veryt important function!!! 向尾部添加
 
                 # if self.id == 2 and self.ctrl_pts.size() == 106:
                     # self.plot(origin_points)
                     # self.plot_debug(points=origin_points, query=inner_border, center=center, next_initial=next_initial)
+
+                #非常重要！作者从这里返回了！！！
                 return True
-            else:
+            else:#有点超过阈值
                 d_head = np.linalg.norm(self.ctrl_pts.get_xyz(0) - outer_border)
                 d_tile = np.linalg.norm(self.ctrl_pts.get_xyz(-1) - outer_border)
                 # if self.id == 5 and self.ctrl_pts.size() == 105:
                 #     self.id = self.id
-                if d_head <= d_tile: # head is closer to the farthest point
+                if d_head <= d_tile: # head is closer to the farthest point 如果是初始化那么永远进入这个条件
                     center = self.ctrl_pts.get_xyz(0)
                     if self.ctrl_pts.size()>=2:
-                        outer_border = self.get_query(self.ctrl_pts.get_xyz(1), self.ctrl_pts.get_xyz(0), polyline)
-                    next_initial = self.get_next_node(outer_border, self.ctrl_pts.get_xyz(0), self.ctrl_points_chord, polyline)
+                        outer_border = self.get_query(self.ctrl_pts.get_xyz(1), #query pt
+                                                      self.ctrl_pts.get_xyz(0), #center
+                                                      polyline)
+                    next_initial = self.get_next_node(outer_border, #query pt
+                                                      self.ctrl_pts.get_xyz(0),
+                                                      self.ctrl_points_chord, 
+                                                      polyline)
                     self.ctrl_pts.add(next_initial)
                     # print("add head ", d_head, " ", d_tile)
                 else:#if tile is closer or equal
@@ -272,9 +306,10 @@ class LaneFeature:
                 #     self.plot_debug(points=origin_points_debug, query=outer_border, center=center, next_initial=next_initial, polyline = polyline)
 
                     # print("add tail")
-                inital_point = next_initial
+                inital_point = next_initial#变更了初始控制点！！！！
                 origin_points = origin_points[no_assigned]
 
+    #
     def get_query(self, start_pt, end_pt, polyline):
         start_pt_new = polyline['rot'].apply(start_pt)
         end_pt_new = polyline['rot'].apply(end_pt)
@@ -288,18 +323,22 @@ class LaneFeature:
         query = polyline['rot'].inv().apply(query)
         return query
     
+    #从center到query构成向量，然后取向量长度为radius，将这个center加上这个向量
+    #详见算法实现文档
     def get_nearest_on_circle(self, query, center, radius):
         query_new = query - center
         phi = np.arctan2(query_new[1], query_new[0])
         theta = np.arctan2(np.linalg.norm(query_new[:2]), query_new[2])
         delta = np.array([radius * np.cos(phi) * np.sin(theta),
-                                      radius * np.sin(phi) * np.sin(theta),
-                                      radius * np.cos(theta)])
+                        radius * np.sin(phi) * np.sin(theta),
+                        radius * np.cos(theta)])
         nearest_on_circle = center + delta
         return nearest_on_circle
     
+    #center = 控制点
+    #qury = 距离控制点比较远的原始点
     def get_next_node(self, query, center, radius, polyline, points_debug=None):
-        query_new = polyline['rot'].apply(query)
+        query_new = polyline['rot'].apply(query)#polyline['rot'] = 将世界坐标系变化到局部坐标系的旋转矩阵
         center_new = polyline['rot'].apply(center)
         last_result = np.asarray([0, 0, 0])
         for i in range(10):
@@ -319,7 +358,7 @@ class LaneFeature:
                 break
             last_result = query_new
 
-        node_on_polyline = polyline['rot'].inv().apply(query_new)
+        node_on_polyline = polyline['rot'].inv().apply(query_new)#再将局部坐标系下的点变换回世界坐标系
         nearest_on_circle = self.get_nearest_on_circle(node_on_polyline, center, radius)
         return nearest_on_circle
 

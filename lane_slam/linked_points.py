@@ -40,7 +40,7 @@ class LinkedPoints(object):
         self.items = []
         self.head_height = None
         self.tail_height = None
-        self.alpha = cfg.lane_mapping.z_filter_alpha
+        self.alpha = cfg.lane_mapping.z_filter_alpha# =0 
 
     def get_nearest_ctrlpts4(self, point):
         # find 4 nearest control points
@@ -66,7 +66,7 @@ class LinkedPoints(object):
     def find_footpoint(self, point):
         point = point[np.newaxis, :3]#放在前面，会给行上增加维度
         dist, idx = self.kdtree.query(point, k=2)#已经匹配上的地图上的lane的kdtree
-        if (dist > cfg.lane_mapping.ctrl_points_chord).any():
+        if (dist > cfg.lane_mapping.ctrl_points_chord).any():#ctrl_points_chord = 3
             return None, None, None
         if (idx == 0).any() or (idx == (self.size() - 1)).any():
             return None, None, None
@@ -95,40 +95,46 @@ class LinkedPoints(object):
         return self.items[idx].item
 
     def reverse(self):
-        self.items.reverse()
+        self.items.reverse()#items数据类型是list []
         tmp = self.head_height
         self.head_height = self.tail_height
         self.tail_height = tmp
 
+    #
     def add(self, item):
         self.max_node_id += 1
-        if self.alpha > 0:
+        if self.alpha > 0:#默认不会进入这个条件
             if self.head_height is None:
                 self.head_height = item[2]
             else:
                 self.head_height = self.alpha * self.head_height + (1 - self.alpha) * item[2]
             item[2] = self.head_height
         node = Node(item, self.max_node_id)
-        self.items.insert(0, node)
+        self.items.insert(0, node)#插入到头部
 
+    #
     def append(self, item):
         self.max_node_id += 1
-        if self.alpha > 0:
+        if self.alpha > 0:#默认不会进入这个条件
             if self.tail_height is None:
                 self.tail_height = item[2]
             else:
                 self.tail_height = self.alpha * self.tail_height + (1 - self.alpha) * item[2]
             item[2] = self.tail_height
         node = Node(item, self.max_node_id)
-        self.items.append(node)
+        self.items.append(node)#添加到尾部
+
+
 
     def insert(self, index, item):
         self.max_node_id += 1
         node = Node(item, self.max_node_id)
         self.items.insert(index, node)
 
+
     def size(self):
        return len(self.items)
+
 
     def update_kdtree(self):
         points = self.get_xyzs()

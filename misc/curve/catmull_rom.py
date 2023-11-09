@@ -13,7 +13,7 @@ def parameterization(pt_w, ctrl_pts_np, tau = 0.5, N = 4):
     # min N = 2
     #生成样条曲线
     spline = CatmullRomSpline(ctrl_pts_np, tau)
-    #根据u的四个不同取值，0 0.25 0.5 0.75 和1.0得到样条曲线的采样四个点，需要非常注意的采样得到的四个点在控制点P1和P2中间
+    #根据u的四个不同取值，0 0.25 0.5 0.75 和1.0得到样条曲线的采样四个点，需要非常注意控制点P1和P2对应的u分别为0.25 和 0.5
     anchors = spline.get_points(N, return_knots = True)
 
     # find the two anchors that pt_w is between
@@ -24,7 +24,7 @@ def parameterization(pt_w, ctrl_pts_np, tau = 0.5, N = 4):
     v1 = pt2[:3] - pt1[:3]
     v2 = pt_w[:3] - pt1[:3]
     ratio = np.dot(v1, v2.T) / np.sum(v1**2) #除以v1的模，再除以v1的模得到0~1之间的比例
-    u = pt1[3] + ratio * (pt2[3] - pt1[3])
+    u = pt1[3] + ratio * (pt2[3] - pt1[3])#pt1[3] = 0.25 pt2[3] = 0.5
     if u < 0 or u > 1:
         return None, None
     u = u.item()#函数取出的元素值的精度更高
